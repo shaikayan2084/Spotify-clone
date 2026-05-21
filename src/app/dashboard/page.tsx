@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Music2, Mic2, Disc3, BarChart3, Loader2,
@@ -25,6 +25,7 @@ export default function Dashboard() {
   const [tracks, setTracks] = useState<SpotifyTrack[]>([]);
   const [artists, setArtists] = useState<SpotifyArtist[]>([]);
   const [features, setFeatures] = useState<SpotifyAudioFeatures[]>([]);
+  const [recentTracks, setRecentTracks] = useState<{ played_at: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState("medium_term");
   const [error, setError] = useState("");
@@ -33,10 +34,11 @@ export default function Dashboard() {
     setLoading(true);
     setError("");
     try {
-      const [profileRes, tracksRes, artistsRes] = await Promise.all([
+      const [profileRes, tracksRes, artistsRes, recentRes] = await Promise.all([
         fetch("/api/me"),
         fetch(`/api/top/tracks?time_range=${range}&limit=20`),
         fetch(`/api/top/artists?time_range=${range}&limit=20`),
+        fetch("/api/recently-played"),
       ]);
 
       if (profileRes.status === 401) {
@@ -47,10 +49,13 @@ export default function Dashboard() {
       const profileData = await profileRes.json();
       const tracksData = await tracksRes.json();
       const artistsData = await artistsRes.json();
+      let recentData = { items: [] };
+      if (recentRes.ok) recentData = await recentRes.json();
 
       setProfile(profileData);
       setTracks(tracksData.items || []);
       setArtists(artistsData.items || []);
+      setRecentTracks(recentData.items || []);
 
       const trackIds = (tracksData.items || []).slice(0, 10).map((t: SpotifyTrack) => t.id);
       if (trackIds.length) {
@@ -84,12 +89,24 @@ export default function Dashboard() {
     .slice(0, 10)
     .map(([name, count]) => ({ name, count, color: "#1DB954" }));
 
-  const heatmapData: HeatmapData[] = [];
-  for (let d = 0; d < 7; d++) {
-    for (let h = 0; h < 24; h++) {
-      heatmapData.push({ day: d, hour: h, value: Math.floor(Math.random() * 15) });
+  const heatmapData: HeatmapData[] = useMemo(() => {
+    const counts: Record<string, number> = {};
+    recentTracks.forEach((item) => {
+      const date = new Date(item.played_at);
+      const day = date.getDay();
+      const hour = date.getHours();
+      const key = `${day}-${hour}`;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const result: HeatmapData[] = [];
+    for (let d = 0; d < 7; d++) {
+      for (let h = 0; h < 24; h++) {
+        const key = `${d}-${h}`;
+        result.push({ day: d, hour: h, value: counts[key] || 0 });
+      }
     }
-  }
+    return result;
+  }, [recentTracks]);
 
   const avgFeatures = features.length
     ? features.reduce(
